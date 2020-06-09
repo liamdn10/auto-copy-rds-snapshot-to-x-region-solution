@@ -13,7 +13,6 @@ class RdsInstance:
         self.RDS_INSTANCES = os.environ['rds_instances'].split(',')
         self.KMS_KEY_ID = os.environ['kms_key_id']
         self.ENCRYPT_RDS_INSTANCE_SNAPSHOT = os.environ['encrypt_rds_instance_snapshot']
-        
         self.__sns_client = sns_client.SnsClient()
         
         try:
@@ -46,7 +45,24 @@ class RdsInstance:
         # copy snapshot to target region
         target_snapshot_identifer = source_snapshot_info['source_snapshot_identifier'].replace(":","-") + '-autocopied'
         try:
-            if self.ENCRYPT_RDS_INSTANCE_SNAPSHOT == 'yes':
+            if source_snapshot_info['is_encrypted'] == False and self.ENCRYPT_RDS_INSTANCE_SNAPSHOT == 'no':
+                self.__rds_tar_client.copy_db_snapshot(
+                    SourceDBSnapshotIdentifier = source_snapshot_info['source_snapshot_arn'],
+                    TargetDBSnapshotIdentifier = target_snapshot_identifer,
+                    Tags = [
+                        {
+                            'Key': 'Source-Snapshot',
+                            'Value': source_snapshot_info['source_snapshot_arn']
+                        },
+                        {
+                            'Key': 'Source-Snapshot-Type',
+                            'Value': source_snapshot_info['source_snapshot_type']
+                        }
+                    ],
+                    CopyTags = True,
+                    SourceRegion = event['region']
+                )
+            else:
                 self.__rds_tar_client.copy_db_snapshot(
                     SourceDBSnapshotIdentifier = source_snapshot_info['source_snapshot_arn'],
                     TargetDBSnapshotIdentifier = target_snapshot_identifer,
@@ -64,23 +80,7 @@ class RdsInstance:
                     SourceRegion = event['region'],
                     KmsKeyId = self.KMS_KEY_ID
                 )
-            else:
-                self.__rds_tar_client.copy_db_snapshot(
-                    SourceDBSnapshotIdentifier = source_snapshot_info['source_snapshot_arn'],
-                    TargetDBSnapshotIdentifier = target_snapshot_identifer,
-                    Tags = [
-                        {
-                            'Key': 'Source-Snapshot',
-                            'Value': source_snapshot_info['source_snapshot_arn']
-                        },
-                        {
-                            'Key': 'Source-Snapshot-Type',
-                            'Value': source_snapshot_info['source_snapshot_type']
-                        }
-                    ],
-                    CopyTags = True,
-                    SourceRegion = event['region']
-                )
+                
         except Exception as e:
             # print("ERROR: RDS Snapshot is not in available state")
             # print(e)
@@ -175,18 +175,24 @@ class RdsInstance:
 
         return target_snapshots
     
-    def __get_rds_instance_identifier(self, source_snapshot_identifier, region):
+    def __get_rds_instance_info(self, source_snapshot_identifier, region):
         try:
             res = self.__rds_src_client.describe_db_snapshots(
                 DBSnapshotIdentifier = source_snapshot_identifier
             )
         
-            return res['DBSnapshots'][0]['DBInstanceIdentifier']
+            return {
+                'db_instance_identifier': res['DBSnapshots'][0]['DBInstanceIdentifier'],
+                'is_encrypted': res['DBSnapshots'][0]['Encrypted']
+            }
         except Exception as e:
             # print('Failed to get rds instance identifier')
             # print(e)
             self.__sns_client.error_notification(e)
-            return ""
+            return {
+                'db_instance_identifier': '',
+                'is_encrypted': ''
+            }
     
     def __get_source_snapshot_info(self, event):
         region = event['region']
@@ -197,13 +203,18 @@ class RdsInstance:
         message = event_detail['Message']
         
         db_instance_identifier = ''
+        is_encrypted = ''
         
         if message == 'Automated snapshot created':
             source_snapshot_type = 'Automated'
-            db_instance_identifier = self.__get_rds_instance_identifier(source_snapshot_identifier, region)
+            rds_instance_info = self.__get_rds_instance_info(source_snapshot_identifier, region)
+            db_instance_identifier = rds_instance_info['db_instance_identifier']
+            is_encrypted = rds_instance_info['is_encrypted']
         elif message == 'Manual snapshot created':
             source_snapshot_type = 'Manual'
-            db_instance_identifier = self.__get_rds_instance_identifier(source_snapshot_identifier, region)
+            rds_instance_info = self.__get_rds_instance_info(source_snapshot_identifier, region)
+            db_instance_identifier = rds_instance_info['db_instance_identifier']
+            is_encrypted = rds_instance_info['is_encrypted']
         elif message == 'Deleted automated snapshot':
             source_snapshot_type = 'Automated'
         elif message == 'Deleted manual snapshot':
@@ -220,7 +231,8 @@ class RdsInstance:
                 'db_instance_identifier': db_instance_identifier,
                 'message': message,
                 'event_categories': event_categories,
-                'source_snapshot_type': source_snapshot_type
+                'source_snapshot_type': source_snapshot_type,
+                'is_encrypted': is_encrypted
             }
         )
     

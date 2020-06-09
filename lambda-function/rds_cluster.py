@@ -2,6 +2,7 @@ import json
 import boto3
 import os
 import sys
+import sns_client
 
 
 class RdsCluster:
@@ -11,8 +12,9 @@ class RdsCluster:
         self.DEST_REGION = os.environ['dest_region']
         self.RDS_CLUSTERS = os.environ['rds_clusters'].split(',')
         self.KMS_KEY_ID = os.environ['kms_key_id']
+
+        self.__sns_client = sns_client.SnsClient()
         
-        # print(self.RDS_CLUSTERS)
         try:
             self.__rds_src_client = boto3.client('rds', region_name=src_region)
             self.__rds_tar_client = boto3.client('rds', self.DEST_REGION)
@@ -43,23 +45,41 @@ class RdsCluster:
         # else, copy snapshot to target region
         target_snapshot_identifer = source_snapshot_info['source_snapshot_identifier'].replace(":","-") + '-autocopied'
         try:
-            self.__rds_tar_client.copy_db_cluster_snapshot(
-                SourceDBClusterSnapshotIdentifier = source_snapshot_info['source_snapshot_arn'],
-                TargetDBClusterSnapshotIdentifier = target_snapshot_identifer,
-                Tags = [
-                    {
-                        'Key': 'Source-Snapshot',
-                        'Value': source_snapshot_info['source_snapshot_arn']
-                    },
-                    {
-                        'Key': 'Source-Snapshot-Type',
-                        'Value': source_snapshot_info['source_snapshot_type']
-                    }
-                ],
-                CopyTags = True,
-                SourceRegion = event['region'],
-                KmsKeyId = self.KMS_KEY_ID
-            )
+            if source_snapshot_info['is_encrypted']:
+                self.__rds_tar_client.copy_db_snapshot(
+                    SourceDBSnapshotIdentifier = source_snapshot_info['source_snapshot_arn'],
+                    TargetDBSnapshotIdentifier = target_snapshot_identifer,
+                    Tags = [
+                        {
+                            'Key': 'Source-Snapshot',
+                            'Value': source_snapshot_info['source_snapshot_arn']
+                        },
+                        {
+                            'Key': 'Source-Snapshot-Type',
+                            'Value': source_snapshot_info['source_snapshot_type']
+                        }
+                    ],
+                    CopyTags = True,
+                    SourceRegion = event['region'],
+                    KmsKeyId = self.KMS_KEY_ID
+                )
+            else:
+                self.__rds_tar_client.copy_db_cluster_snapshot(
+                    SourceDBClusterSnapshotIdentifier = source_snapshot_info['source_snapshot_arn'],
+                    TargetDBClusterSnapshotIdentifier = target_snapshot_identifer,
+                    Tags = [
+                        {
+                            'Key': 'Source-Snapshot',
+                            'Value': source_snapshot_info['source_snapshot_arn']
+                        },
+                        {
+                            'Key': 'Source-Snapshot-Type',
+                            'Value': source_snapshot_info['source_snapshot_type']
+                        }
+                    ],
+                    CopyTags = True,
+                    SourceRegion = event['region']
+                )
         except Exception as e:
             # print("ERROR:")
             # print(e)
@@ -165,12 +185,18 @@ class RdsCluster:
                 DBClusterSnapshotIdentifier = source_snapshot_identifier
             )
         
-            return res['DBClusterSnapshots'][0]['DBClusterIdentifier']
+            return {
+                'db_cluster_identifier': res['DBClusterSnapshots'][0]['DBClusterIdentifier'],
+                'is_encrypted': res['DBClusterSnapshots'][0]['StorageEncrypted']
+            }
         except Exception as e:
             # print('Failed to get rds cluster identifier')
             # print(e)
             self.__sns_client.error_notification(e)
-            return ""
+            return {
+                'db_cluster_identifier': '',
+                'is_encrypted': ''
+            }
     
     def __get_source_snapshot_info(self, event):
         region = event['region']
@@ -181,13 +207,16 @@ class RdsCluster:
         message = event_detail['Message']
         
         db_cluster_identifier = ''
+        is_encrypted = ''
         
         if message == 'Automated cluster snapshot created':
             source_snapshot_type = 'Automated'
             db_cluster_identifier = self.__get_rds_cluster_identifier(source_snapshot_identifier, region)
+            is_encrypted = ''
         elif message == 'Manual cluster snapshot created':
             source_snapshot_type = 'Manual'
             db_cluster_identifier = self.__get_rds_cluster_identifier(source_snapshot_identifier, region)
+            is_encrypted = ''
         elif message == 'Deleted automated snapshot':
             source_snapshot_type = 'Automated'
         elif message == 'Deleted manual snapshot':
@@ -204,7 +233,8 @@ class RdsCluster:
                 'db_cluster_identifier': db_cluster_identifier,
                 'message': message,
                 'event_categories': event_categories,
-                'source_snapshot_type': source_snapshot_type
+                'source_snapshot_type': source_snapshot_type,
+                'is_encrypted': is_encrypted
             }
         )
     

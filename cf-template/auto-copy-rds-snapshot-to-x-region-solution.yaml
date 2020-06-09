@@ -57,16 +57,16 @@ Parameters:
       - RDS-Cluster
       - Both
     Type: String
-  EnableCustomEncryptKeyForRdsSnapshot:
-    Description: Create Key to encrypt RDS snapshot. (If source DB volume encrypted)
+  EnableCustomEncryptKeyForRdsInstanceSnapshot:
+    Description: Create Key to encrypt RDS instance snapshot. (If source DB instance volume unencrypted)
     Default: 'no'
     AllowedValues:
       - 'yes'
       - 'no'
     Type: String
-  KmsEncryptKeyId:
-    Description: Key ID or Key Alisa or Key arn of KMS encrypt key in the target region
-    Default: ""
+  KmsEncryptKeyArn:
+    Description: Key arn of KMS encrypt key in the target region
+    Default: arn:aws:kms:us-east-1:12345678910:key/key-id
     Type: String
   AutomatedDeleteManualSnapshot:
     Description: Delete copy of backup snapshot or not when a manual snapshot deleted in source region
@@ -153,7 +153,7 @@ Parameters:
     Type: String
 
 Conditions:
-  CreateKmsKey: !Equals [ !Ref EnableCustomEncryptKeyForRdsSnapshot, 'Yes' ]
+  EnalbeEncryptCopiesOfRdsInstanceSnapshots: !Equals [ !Ref EnableCustomEncryptKeyForRdsInstanceSnapshot, 'Yes' ]
 
 Resources:
   SnsTopic:
@@ -208,14 +208,8 @@ Resources:
           automated_delete_manual_snapshot: !Ref AutomatedDeleteManualSnapshot
           automated_snapshot_maximum_copies: !Ref MaximumOfCopiesOfAutomatedSnapshot
           dest_region: !Ref TargetRegion
-          # dest_region: !Ref AWS::Region
-          encrypt_rds_instance_snapshot: !Ref EnableCustomEncryptKeyForRdsSnapshot
-          # kms_key_id: 
-          #   Fn::If:
-          #   - CreateKmsKey
-          #   - !Ref KmsEncryptKey
-          #   - ""
-          kms_key_id: !Ref KmsEncryptKeyId
+          encrypt_rds_instance_snapshot: !Ref EnableCustomEncryptKeyForRdsInstanceSnapshot
+          kms_key_id: !Ref KmsEncryptKeyArn
           rds_clusters: !Ref RdsClusters
           rds_instances: !Ref RdsInstances
           sns_topic_arn: !Ref SnsTopic
@@ -247,6 +241,7 @@ Resources:
                 - 'rds:List*'
                 - 'rds:CopyDBSnapshot'
                 - 'rds:DeleteDBSnapshot'
+                - 'rds:CopyDBClusterSnapshot'
                 - 'rds:DeleteDBClusterSnapshot'
                 - 'rds:AddTagsToResource'
                 - 'rds:RemoveTagsFromResource'
@@ -260,76 +255,8 @@ Resources:
                 - "kms:GenerateDataKey"
               Resource: 
                 - 'arn:aws:logs:*:*:*'
-                - Fn::If:
-                  - CreateKmsKey
-                  - !Ref KmsEncryptKeyId
-                  - !Ref AWS::NoValue
+                - !Ref KmsEncryptKeyArn
             - Effect: Allow
               Action: 
                 - 'sns:Publish'
               Resource: !Ref SnsTopic
-
-  # KmsEncryptKey:
-  #   Type: AWS::KMS::Key
-  #   Condition: CreateKmsKey
-  #   Properties:
-  #     Description: KMS Key for encrypting copies of RDS Snapshot
-  #     Enabled: true
-  #     EnableKeyRotation: true
-  #     KeyPolicy:
-  #       Version: '2012-10-17'
-  #       Statement:
-  #       - Effect: Allow
-  #         Principal:
-  #           AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
-  #         Action: 
-  #           - "kms:*"
-  #         Resource: "*"
-  #       - Effect: Allow
-  #         Principal:
-  #           AWS: !Ref RoleForAutoCopyRdsSnapshotToXRegionFunction
-  #         Action:
-  #           - "kms:Encrypt"
-  #           - "kms:Decrypt"
-  #           - "kms:ReEncrypt*"
-  #           - "kms:GenerateDataKey*"
-  #           - "kms:DescribeKey"
-  #         Resource: "*"
-  #       - Effect: Allow
-  #         Principal:
-  #           AWS: !Ref RoleForAutoCopyRdsSnapshotToXRegionFunction
-  #         Action:
-  #           - "kms:CreateGrant"
-  #           - "kms:ListGrants"
-  #           - "kms:RevokeGrant"
-  #         Resource: "*"
-
-  # KmsKeyAlias:
-  #   Type: AWS::KMS::Alias
-  #   Condition: CreateKmsKey
-  #   Properties:
-  #     AliasName: alias/Rds-Auto-Copy-Rds-Snapshot-To-X-Region-Enscryption-Key-Alias
-  #     TargetKeyId: !Ref KmsEncryptKey
-  
-  # KmsEncryptKey:
-  #   Type: Custom::CrossRegionStack
-  #   Condition: CreateKmsKey
-  #   Properties:
-  #     ServiceToken: !GetAtt CfnAssumeRoleLambda.Arn
-  #     CfnParameters:
-  #       IamRoleUsingKms: !GetAtt RoleForAutoCopyRdsSnapshotToXRegionFunction.Arn
-  #     TemplateURL: https://liamdao-cf.s3-ap-southeast-1.amazonaws.com/solutions/auto-copy-rds-snapshot-to-x-region/rds-snapshot-encrypt-key-stack.yaml
-  #     Region: !Ref TargetRegion
-  #     ParentStackId: !Ref AWS::StackId
-
-  # CfnAssumeRoleLambda:
-  #   Type: AWS::Lambda::Function
-  #   Properties:
-  #     Handler: lambda_function.lambda_handler
-  #     MemorySize: 128
-  #     Role: !Ref CentralRoleArn
-  #     Runtime: python3.6
-  #     Timeout: 900
-  #     Code:
-  #       S3Bucket: 'aws-quickstart'
-  #       S3Key: 'quickstart-examples/samples/cloudformation-cross-account/functions/packages/CfnStackAssumeRole/lambda.zip'
