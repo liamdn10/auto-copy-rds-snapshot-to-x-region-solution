@@ -1,4 +1,4 @@
-# auto-copy-rds-snapshot-to-x-region-solution
+# Automated copy RDS snapshot to X region solution
 solution for automated copy AWS RDS instance and cluster snapshot to X region (in a different region)
 
 ## How solution work
