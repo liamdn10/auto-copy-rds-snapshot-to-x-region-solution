@@ -14,11 +14,9 @@
 # Version: 0.1
 # =============================================
 # Author: Lam-Dao-Ngoc
-# Student at University of Engineering and Technology (UET - VNU) (08/2016-12/2020)
-# AWS Solution Architech Associate (03/2019 - 03/2022)
+# Email: lamdaongc@gmail.com
 # Location: Hanoi, Vietnam
 # Github: https://github.com/liamhubian
-# LinkedIn: https://www.linkedin.com/in/lamdn8/
 # =============================================
 
 AWSTemplateFormatVersion: 2010-09-09
